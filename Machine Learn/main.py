@@ -3,8 +3,13 @@ import pandas as pd
 from datetime import datetime
 import re
 import matplotlib.pyplot as plt
+from sklearn.ensemble import BaggingRegressor
+from sklearn.linear_model import SGDRegressor
+from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.preprocessing import MultiLabelBinarizer, OneHotEncoder, StandardScaler
 from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+
 
 
 # Read the dataset
@@ -89,6 +94,7 @@ def calculate_days_aired(aired_str):
 
 # Changes the dates aired into how many days it aired for to make it into a value that's easier to work with
 df['Aired_Days'] = df['Aired'].apply(calculate_days_aired)
+df = df.drop(['Aired'], axis=1)
 
 
 def split_premiered(premiered_str):
@@ -107,6 +113,10 @@ def split_premiered(premiered_str):
 
 
 df[['Season', 'Year']] = df['Premiered'].apply(lambda x: pd.Series(split_premiered(x)))
+df = df.drop(['Premiered'], axis=1)
+
+df['Episodes'] = df['Episodes'].replace('Unknown', np.nan)
+df['Episodes'] = pd.to_numeric(df['Episodes'], errors='coerce')         # 2. Convert to float (non-numeric becomes NaN)
 
 
 df['Duration'] = df['Duration'].replace('Unknown', np.nan)
@@ -135,6 +145,7 @@ def parse_duration(duration_str):
 
 # Apply the function
 df['Duration_Minutes'] = df['Duration'].apply(parse_duration)
+df = df.drop(['Duration'], axis=1)
 
 
 categorical_cols = ['Type', 'Season', 'Source', 'Rating']
@@ -144,6 +155,44 @@ for col in df.columns:
     if df[col].dtype == bool:
         df[col] = df[col].astype(int)
 
-print(df.head())
-print(df.describe())
-print(df.info())
+
+df = df.fillna(df.median(numeric_only=True))
+
+X = df.drop('Score', axis=1)
+y = df['Score']
+
+# Help standardize the features
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+
+# Attempt to use bagging
+bagging = BaggingRegressor(estimator=SGDRegressor(max_iter=1000, tol=1e-3), n_estimators=20, random_state=42)
+bagging.fit(X_scaled, y)
+coefs = np.array([est.coef_ for est in bagging.estimators_])
+avg_coefs = np.mean(np.abs(coefs), axis=0)
+
+# Find the importance of each feature to see which ones are the best
+feature_importance_df = pd.DataFrame({'feature': X.columns, 'importance': avg_coefs})
+top_features = feature_importance_df.sort_values(by='importance', ascending=False).head(30)['feature'].tolist()
+X_top = X[top_features]
+
+X_top_scaled = scaler.fit_transform(X_top)
+
+X_train, X_test, y_train, y_test = train_test_split(X_top_scaled, y, test_size=0.2, random_state=42)
+
+# Gradient descent time baby
+final_model = SGDRegressor(max_iter=1000, tol=1e-3)
+final_model.fit(X_train, y_train)
+y_pred = final_model.predict(X_test)
+
+rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+r2 = r2_score(y_test, y_pred)
+
+print(f"R² Score: {r2:.2f}")
+print(f"RMSE: {rmse:.2f}")
+
+tolerance = 1.0
+within_margin = np.abs(y_test - y_pred) <= tolerance
+percentage_within_margin = within_margin.mean() * 100
+
+print(f"Percentage of predictions within ±{tolerance}: {percentage_within_margin:.2f}%")
