@@ -3,12 +3,16 @@ import pandas as pd
 from datetime import datetime
 import re
 import matplotlib.pyplot as plt
-from sklearn.ensemble import BaggingRegressor
-from sklearn.linear_model import SGDRegressor
-from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.preprocessing import MultiLabelBinarizer, OneHotEncoder, StandardScaler
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.metrics import mean_squared_error, r2_score
+from sklearn.linear_model import SGDRegressor
+from gensim.models.doc2vec import Doc2Vec, TaggedDocument
+import nltk
+nltk.download('punkt')
+nltk.download('punkt_tab')
+from nltk.tokenize import word_tokenize
 
 
 
@@ -30,6 +34,50 @@ df = df.drop(['anime_id', 'Name', 'Producers', 'Licensors', 'Studios'], axis=1)
 # plt.title('Distribution of Anime Scores')
 # plt.show()
 
+
+# Check if an english name is available if not then replace it with the japanese name
+df['English name'] = df['English name'].where(
+    ~df['English name'].str.strip().isin(['', 'UNKNOWN', np.nan]),
+    df['Name']
+)
+# Replace the empty description with an empty string
+df['Synopsis'] = df['Synopsis'].replace(["No description available for this anime.", np.nan], "")
+
+# Use word embeddings on the title and synopsis
+tagged_titles = [
+    TaggedDocument(words=word_tokenize(title.lower()), tags=[f"TITLE_{i}"])
+    for i, title in enumerate(df['English name'])
+]
+
+tagged_synopses = [
+    TaggedDocument(words=word_tokenize(title.lower()), tags=[f"SYNOPSIS_{i}"])
+    for i, title in enumerate(df['Synopsis'])
+]
+
+# Train the models for the title and synopsis using Doc2Vec
+title_model = Doc2Vec(vector_size=50, window=2, min_count=1, epochs=40, dm=1, workers=4)
+title_model.build_vocab(tagged_titles)
+title_model.train(tagged_titles, total_examples=title_model.corpus_count, epochs=title_model.epochs)
+
+synopsis_model = Doc2Vec(vector_size=100, window=5, min_count=2, epochs=40, dm=1, workers=4)
+synopsis_model.build_vocab(tagged_synopses)
+synopsis_model.train(tagged_synopses, total_examples=synopsis_model.corpus_count, epochs=synopsis_model.epochs)
+
+# Retrieve the vectors for the title and synopsis
+title_vectors = np.vstack([
+    title_model.dv[f"TITLE_{i}"] for i in range(len(df))
+])
+
+synopsis_vectors = np.vstack([
+    synopsis_model.dv[f"SYNOPSIS_{i}"] for i in range(len(df))
+])
+
+# Turn the vectors into dataframes then add them to the dataframe and then drop the old columns
+title_df = pd.DataFrame(title_vectors, columns=[f"title_vec_{i}" for i in range(title_vectors.shape[1])])
+synopsis_df = pd.DataFrame(synopsis_vectors, columns=[f"synopsis_vec_{i}" for i in range(synopsis_vectors.shape[1])])
+
+df_vectors = pd.concat([df.reset_index(drop=True), title_df, synopsis_df], axis=1)
+df = df_vectors.drop(['Name', 'English name', 'Synopsis'], axis=1)
 
 # Split genres by commas
 mlb = MultiLabelBinarizer()
@@ -161,10 +209,14 @@ df = df.fillna(df.median(numeric_only=True))
 X = df.drop('Score', axis=1)
 y = df['Score']
 
-# Help standardize the features
+# Help standardize the features and normalize the score
 scaler = StandardScaler()
 X_scaled = scaler.fit_transform(X)
+score_scaler = MinMaxScaler()
+y_scaled = score_scaler.fit_transform(y.values.reshape(-1, 1)).flatten()
 
+# LINEAR REGRESSION
+from sklearn.ensemble import BaggingRegressor
 # Attempt to use bagging
 bagging = BaggingRegressor(estimator=SGDRegressor(max_iter=1000, tol=1e-3), n_estimators=20, random_state=42)
 bagging.fit(X_scaled, y)
@@ -186,9 +238,7 @@ final_model.fit(X_train, y_train)
 y_pred = final_model.predict(X_test)
 
 rmse = np.sqrt(mean_squared_error(y_test, y_pred))
-r2 = r2_score(y_test, y_pred)
 
-print(f"R² Score: {r2:.2f}")
 print(f"RMSE: {rmse:.2f}")
 
 tolerance = 1.0
