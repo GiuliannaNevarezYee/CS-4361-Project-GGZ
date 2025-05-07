@@ -116,7 +116,7 @@ df[['Season', 'Year']] = df['Premiered'].apply(lambda x: pd.Series(split_premier
 df = df.drop(['Premiered'], axis=1)
 
 df['Episodes'] = df['Episodes'].replace('Unknown', np.nan)
-df['Episodes'] = pd.to_numeric(df['Episodes'], errors='coerce')         # 2. Convert to float (non-numeric becomes NaN)
+df['Episodes'] = pd.to_numeric(df['Episodes'], errors='coerce')
 
 
 df['Duration'] = df['Duration'].replace('Unknown', np.nan)
@@ -140,7 +140,7 @@ def parse_duration(duration_str):
     if seconds:
         total_seconds += int(seconds.group(1))  # seconds
 
-    return total_seconds / 60 if total_seconds > 0 else np.nan  # Ensure NaN if no time found
+    return total_seconds / 60 if total_seconds > 0 else np.nan
 
 
 # Apply the function
@@ -148,7 +148,7 @@ df['Duration_Minutes'] = df['Duration'].apply(parse_duration)
 df = df.drop(['Duration'], axis=1)
 
 
-categorical_cols = ['Type', 'Season', 'Source', 'Rating']
+categorical_cols = ['Type', 'Season', 'Source', 'Rating', 'Status']
 df[categorical_cols] = df[categorical_cols].fillna('Unknown')
 df = pd.get_dummies(df, columns=categorical_cols, prefix=categorical_cols, dummy_na=False)
 for col in df.columns:
